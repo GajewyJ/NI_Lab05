@@ -1,4 +1,4 @@
-from src.models import Apartment, Bill, Parameters, Tenant, Transfer
+from src.models import Apartment, Bill, Parameters, Tenant, Transfer, ApartmentSettlement, TenantSettlement
 
 
 class Manager:
@@ -23,3 +23,67 @@ class Manager:
             if tenant.apartment not in self.apartments:
                 return False
         return True
+
+    def get_apartment_costs(self, apartment_key: str, year: int | None = None, month: int | None = None, ) -> float | None:
+            if apartment_key not in self.apartments:
+                return None
+
+            if month is not None and not (1 <= month <= 12):
+                raise ValueError(f"Invalid month: {month}. Must be between 1 and 12.")
+
+            if month is not None and year is None:
+                raise ValueError("Cannot filter by month without specifying a year.")
+
+            return float(
+                sum(
+                    bill.amount_pln
+                    for bill in self.bills
+                    if bill.apartment == apartment_key
+                    and (year is None or bill.settlement_year == year)
+                    and (month is None or bill.settlement_month == month)
+                )
+            )
+
+
+    def create_apartment_settlement(self, apartment_key: str, year: int, month: int) -> ApartmentSettlement | None:
+        total_bills = self.get_apartment_costs(apartment_key, year, month)
+        if total_bills is None:
+            return None
+
+        total_rent = 0.0
+        balance = total_rent - total_bills
+
+        return ApartmentSettlement(
+            apartment=apartment_key,
+            month=month,
+            year=year,
+            total_rent_pln=total_rent,
+            total_bills_pln=total_bills,
+            total_due_pln=balance,
+        )
+
+
+    def create_tenant_settlements(self, apartment_settlement: ApartmentSettlement) -> list[TenantSettlement]:
+        ym = f"{apartment_settlement.year}-{apartment_settlement.month:02d}"
+        tenants = [
+            key for key, t in self.tenants.items()
+            if t.apartment == apartment_settlement.apartment
+            and t.date_agreement_from[:7] <= ym <= t.date_agreement_to[:7]
+        ]
+        if not tenants:
+            return []
+
+        share = apartment_settlement.total_bills_pln / len(tenants)
+        return [
+            TenantSettlement(
+                tenant=key,
+                apartment_settlement=f"{apartment_settlement.apartment}-{ym}",
+                month=apartment_settlement.month,
+                year=apartment_settlement.year,
+                rent_pln=0.0,
+                bills_pln=share,
+                total_due_pln=share,
+                balance_pln=-share,
+            )
+            for key in tenants
+        ]
